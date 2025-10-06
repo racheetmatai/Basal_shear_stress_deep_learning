@@ -9,15 +9,20 @@ import icepack
 import firedrake
 from icepack.constants import (ice_density as ρ_I, water_density as ρ_W, gravity as g,)
 import tqdm
-from firedrake import inner, as_vector, assemble, grad, div, conditional, le, ge, And, Mesh, inner
+from firedrake import inner, as_vector, assemble, grad, div, conditional, le, ge, And, Mesh, inner, Constant, sqrt
 from icepack.calculus import FacetNormal
 from icepack.models.hybrid import _pressure_approx
 from operator import itemgetter
 from matplotlib import pyplot as plt
+from tensorflow.keras.models import load_model
 #from firedrake import assemble, Constant, inner, grad, dx
 
 
 class CreateSynthetic:
+
+    def __init__(self):
+        self.indicator = None
+
     def compute_mean_velocity(self, u, h):
         """
         Compute thickness-weighted mean velocity for the box region using self.indicator.
@@ -96,39 +101,38 @@ class CreateSynthetic:
             ),
             1, 0
         )
-    
-    def __init__(self):
-        self.indicator = None
 
-    def load_model(self, filename):
-        # Implement the logic to load a model
-        pass
+    def load_models_and_percentiles(self, encoder_path='vae/encoder_model', decoder_path='vae/decoder_model', percentiles_path='vae/latent_percentiles.pkl'):
+        """
+        Load encoder, decoder models and latent percentiles from disk.
+        """
+        encoder = load_model(encoder_path)
+        decoder = load_model(decoder_path)
+        with open(percentiles_path, 'rb') as f:
+            percentiles = pickle.load(f)
+        lower, upper = percentiles['lower'], percentiles['upper']
+        print(f"Loaded encoder from {encoder_path}, decoder from {decoder_path}, percentiles from {percentiles_path}")
+        return encoder, decoder, lower, upper
 
-    def create_topography(self, filename):
+    def create_topography(self, encoder_path='vae/encoder_model', decoder_path='vae/decoder_model', percentiles_path='vae/latent_percentiles.pkl'):
         """
         Create topography using a trained model.
         :param filename: Path to the trained model file.
         :param z_samples: Latent space samples.
         :return: Generated images.
         """
-        decoder = self.load_model(filename+"_decoder.h5")
-        with open(filename+"_z_samples.pkl", "rb") as f:
-            z_samples = pickle.load(f)
-        def generate_images(decoder, n=5):
-            # Sample from the latent space
-            #latent_dim = 128  # This is the latent_dim defined in the VAE model
-            random_latent_vectors = z_samples[np.random.choice(len(z_samples), size=n)]
+        # Load models and percentiles
+        encoder_loaded, decoder_loaded, lower, upper = self.load_models_and_percentiles(encoder_path, decoder_path, percentiles_path)
 
-            # Decode to generate images
-            generated_images = decoder.predict(random_latent_vectors)
-
-            return generated_images
-        new_images = generate_images(decoder, n=1)
-        return new_images[0]
+        # Example: Generate new latent vectors using loaded percentiles
+        n = 1  # number of images to generate
+        random_latent_vectors = np.random.uniform(low=lower, high=upper, size=(n, len(lower)))
+        generated_images = decoder_loaded.predict(random_latent_vectors)
+        return generated_images[0]
     
-    def create_topography_scaled(self, filename = None, multiplier=1):
-        #b = self.create_topography(filename = filename)
-        b = np.load('thw_image_0.npy') # temp, use model
+    def create_topography_scaled(self, encoder_path='vae/encoder_model', decoder_path='vae/decoder_model', percentiles_path='vae/latent_percentiles.pkl', multiplier=1):
+        # b = np.load('thw_image_0.npy') # temp, use model
+        b = self.create_topography(encoder_path, decoder_path, percentiles_path)
         return b[:,:,0] * multiplier
     
     def pad_topography(self, data, pad_x_minus, pad_x_plus, pad_y, mode = 'reflect'):
@@ -285,7 +289,7 @@ class CreateSynthetic:
 
             print(f"GeoJSON with 4 bounding box lines written to {geojson_path}")
 
-    def create_processed_topography(self, model_filename, index = None, scaling_multiplier = 500, pad_x_minus= 100, pad_x_plus = 100, pad_y = 10, pixel_size_x = 25, pixel_size_y = 25):
+    def create_processed_topography(self, encoder_path=None, decoder_path=None, percentiles_path=None, index=None, scaling_multiplier=500, pad_x_minus=100, pad_x_plus=100, pad_y=10, pixel_size_x=25, pixel_size_y=25):
         """
         Create processed topography using a trained model.
         :param model_filename: Path to the trained model file.
@@ -296,14 +300,14 @@ class CreateSynthetic:
         :param pixel_size_y: Pixel size in the y-direction.
         :return: Generated images.
         """
-        b = self.create_topography_scaled(filename=model_filename, multiplier= scaling_multiplier)
+        b = self.create_topography_scaled(encoder_path=encoder_path, decoder_path=decoder_path, percentiles_path=percentiles_path, multiplier=scaling_multiplier)
         self.padded_topo = self.pad_topography(b, pad_x_minus, pad_x_plus, pad_y)
         if not index:
             self.random_index = np.random.randint(0, 100000)
         else:
             self.random_index = index
-        self.filename=f"base_{self.random_index}.tif"
-        self.geo_filename=f"boundary_{self.random_index}.geojson"
+        self.filename = f"generated_data/base_{self.random_index}.tif"
+        self.geo_filename = f"generated_data/boundary_{self.random_index}.geojson"
         transform = self.save_tif(self.padded_topo, pixel_size_x, pixel_size_y, filename=self.filename)
         self.create_geojson_bbox_from_tif(self.filename, self.geo_filename)
         self.padded_topo = self.pad_topography(b, pad_x_minus+1, pad_x_plus+1, pad_y+1)
@@ -318,7 +322,7 @@ class CreateSynthetic:
         :param lcar: Mesh size parameter.
         """
         if not filename:
-            filename = f"boundary_{self.random_index}.geojson"
+            filename = self.geo_filename
         outline = fetch_outline(filename)
         create_mesh(outline, name=f"mesh_{self.random_index}", lcar=lcar)
         self.mesh2d = Mesh(f"mesh_{self.random_index}.msh")
@@ -331,7 +335,7 @@ class CreateSynthetic:
         :param lcar: Mesh size parameter.
         """
         if not filename:
-            filename = f"boundary_{self.random_index}.geojson"
+            filename = self.geo_filename
 
         outline = fetch_outline(filename)
         if outline is None:
@@ -368,7 +372,7 @@ class CreateSynthetic:
 
         self.m = firedrake.Constant(m)
 
-        b_expr = rasterio.open(f"base_{self.random_index}.tif")
+        b_expr = rasterio.open(self.filename)
         self.b = icepack.interpolate(b_expr, self.Q)
 
         if uniform_thickness is not None and surface_slope is None:
@@ -421,6 +425,13 @@ class CreateSynthetic:
             velocity=u,
             friction=C * ϕ,
         )
+    
+    def constant_friction(self, **kwargs):
+        u, C = kwargs["velocity"], kwargs["friction"]
+        eps = Constant(1e-12)
+        r = sqrt(inner(u, u) + eps*eps)
+        tau = -C * u / r
+        return inner(tau, u)
 
     def terminus(self, **kwargs):
         """
@@ -469,7 +480,7 @@ class CreateSynthetic:
         :param drichlet_ids: List of Dirichlet boundary IDs.
         :param side_wall_ids: List of side wall boundary IDs.
         """
-        model = icepack.models.HybridModel(friction=self.friction, terminus = self.terminus)
+        model = icepack.models.HybridModel(friction=self.constant_friction, terminus=self.terminus)
         opts = {"dirichlet_ids": drichlet_ids, "side_wall_ids": side_wall_ids}
         self.solver = icepack.solvers.FlowSolver(model, **opts)
 
@@ -529,7 +540,7 @@ class CreateSynthetic:
             )
         return h, u, s
 
-    def setup_model(self, filename = None, uniform_thickness = 500,surface_slope = -200, u_in = 20, u_out = 200, constant_temperature = 260, constant_C=1, drichlet_ids = [4], side_wall_ids = [1, 3]):
+    def setup_model(self, filename = None, uniform_thickness = 500,surface_slope = -200, u_in = 20, u_out = 200, constant_temperature = 260, constant_C=1, drichlet_ids = [4], side_wall_ids = [1, 3], nx = 48, ny = 32):
         """
         Setup the model with the given parameters.
         :param filename: Path to the GeoJSON file.
@@ -549,7 +560,7 @@ class CreateSynthetic:
         if filename is None:
             filename = self.geo_filename
             print(f"Using default filename: {filename}")
-        self.create_rectangle_mesh_synthetic(filename = filename, nx = 48, ny = 32)
+        self.create_rectangle_mesh_synthetic(filename = filename, nx = nx, ny = ny)
         self.create_function_space()
         self.set_initial_conditions(uniform_thickness=uniform_thickness, surface_slope=surface_slope, u_in=u_in, u_out=u_out, constant_temperature=constant_temperature, constant_C=constant_C)
         self.create_model(drichlet_ids=drichlet_ids, side_wall_ids=side_wall_ids)

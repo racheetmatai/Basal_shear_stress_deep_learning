@@ -149,7 +149,7 @@ def create_dataset_parallel(n_samples=10, dataset_name='synthetic_ice_flow_param
     print(f"Dataset creation complete. Parameters saved to 'output_data/{dataset_name}'.")
     return df
 
-def process_df(cutoff_velocity=1200, datafile='synthetic_ice_flow_parameters.csv'):
+def process_df(cutoff_velocity=1200, datafile='synthetic_ice_flow_parameters_test.csv'):
     df = pd.read_csv(f'output_data/{datafile}')
     # Split 'Mean Velocity (m/a)' column into 'Vel-x' and 'Vel-y' for all rows
     if 'Mean Velocity (m/a)' in df.columns:

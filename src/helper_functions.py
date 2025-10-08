@@ -154,20 +154,20 @@ def create_dataset_parallel(n_samples=10, dataset_name='synthetic_ice_flow_param
 def process_df(cutoff_velocity=1200, datafile='synthetic_ice_flow_parameters_test.csv'):
     df = pd.read_csv(f'output_data/{datafile}')
     # Split 'Mean Velocity (m/a)' column into 'Vel-x' and 'Vel-y' for all rows
-    if 'Mean Velocity (m/a)' in df.columns:
-        if isinstance(df['Mean Velocity (m/a)'].iloc[0], (list, tuple, np.ndarray, str)):
-            # If stored as string, convert to list
-            if isinstance(df['Mean Velocity (m/a)'].iloc[0], str):
-                df['Mean Velocity (m/a)'] = df['Mean Velocity (m/a)'].apply(lambda x: eval(x) if isinstance(x, str) else x)
-            df[['Vel-x', 'Vel-y']] = pd.DataFrame(df['Mean Velocity (m/a)'].tolist(), index=df.index)
+    # if 'Mean Velocity (m/a)' in df.columns:
+    #     if isinstance(df['Mean Velocity (m/a)'].iloc[0], (list, tuple, np.ndarray, str)):
+    #         # If stored as string, convert to list
+    #         if isinstance(df['Mean Velocity (m/a)'].iloc[0], str):
+    #             df['Mean Velocity (m/a)'] = df['Mean Velocity (m/a)'].apply(lambda x: eval(x) if isinstance(x, str) else x)
+    #         df[['Vel-x', 'Vel-y']] = pd.DataFrame(df['Mean Velocity (m/a)'].tolist(), index=df.index)
     # feature_cols = [
     #     'Thickness (m)', 'Surface Slope (m)', 'Inflow Velocity (m/a)', 'Temperature (K)',
     #     'C (Pa m^(1/3) a^(1/3))', 'Total Form Drag (Pa)', 'RMS Roughness (m)',
     #     'Slope Roughness', 'Mean Velocity (m/a)'
     # ]
 
-    filtered_df = df[((df['Vel-x'].abs() < cutoff_velocity) & 
-                  (df['Vel-y'].abs() < cutoff_velocity))]
+    filtered_df = df[((df['x-Mean Velocity (m/a)'].abs() < cutoff_velocity) & 
+                  (df['y-Mean Velocity (m/a)'].abs() < cutoff_velocity))]
 
     num_not_selected = len(df) - len(filtered_df)
     print(f"Number of rows that didn't make the cut: {num_not_selected}")

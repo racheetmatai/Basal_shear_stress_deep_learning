@@ -60,7 +60,7 @@ def run_synthetic_high_res(encoder_path=None, decoder_path=None, percentiles_pat
     Runs a high-resolution synthetic ice flow model.
     """
     create_synthetic = CreateSynthetic()
-    padded_topo, transform = create_synthetic.create_processed_topography(encoder_path=encoder_path, decoder_path=decoder_path, percentiles_path=percentiles_path, index=index, scaling_multiplier=scaling_multiplier, pad_x_minus=pad_x_minus, pad_x_plus=pad_x_plus, pad_y=pad_y, pixel_size_x=pixel_size_x, pixel_size_y=pixel_size_y)
+    padded_topo, transform, latent_vector = create_synthetic.create_processed_topography(encoder_path=encoder_path, decoder_path=decoder_path, percentiles_path=percentiles_path, index=index, scaling_multiplier=scaling_multiplier, pad_x_minus=pad_x_minus, pad_x_plus=pad_x_plus, pad_y=pad_y, pixel_size_x=pixel_size_x, pixel_size_y=pixel_size_y)
     if plot_topography:
         create_synthetic.plot_padded_topography(padded_topo)
     create_synthetic.setup_model(filename = filename, uniform_thickness=uniform_thickness, surface_slope=surface_slope, u_in = u_in, u_out = u_out, constant_temperature = constant_temperature, constant_C=constant_C, drichlet_ids = drichlet_ids, side_wall_ids = side_wall_ids, nx = nx, ny = ny)
@@ -69,7 +69,7 @@ def run_synthetic_high_res(encoder_path=None, decoder_path=None, percentiles_pat
     u = create_synthetic.diagnostic_solve(create_synthetic.u0, create_synthetic.h0, create_synthetic.s0, create_synthetic.A, create_synthetic.C, create_synthetic.b)
     if plot_depth_average_vel:
         plot_depth_average_u(u)
-    return u, create_synthetic
+    return u, create_synthetic, latent_vector
 
 def create_data(nx = 48, ny = 32):
     thickness = random.randint(1000, 3000)
@@ -77,7 +77,7 @@ def create_data(nx = 48, ny = 32):
     u_in = random.randint(20, 50)
     temperature = random.randint(243, 265)
     c = random.uniform(0.01, 0.0001)
-    u0, create_synthetic = run_synthetic_high_res(encoder_path='vae/encoder_model', 
+    u0, create_synthetic, latent_vector = run_synthetic_high_res(encoder_path='vae/encoder_model', 
                                               decoder_path='vae/decoder_model', 
                                               percentiles_path='vae/latent_percentiles.pkl',
                            index = None, 
@@ -103,22 +103,24 @@ def create_data(nx = 48, ny = 32):
     total_form_drag, shear_stress = create_synthetic.compute_form_drag_volume(u0, create_synthetic.h0, create_synthetic.s0, create_synthetic.b)
     rms_roughness, slope_roughness = create_synthetic.compute_roughness_metrics(create_synthetic.b)    
     mean_velocity = create_synthetic.compute_mean_velocity(u0, create_synthetic.h0)
-    list_of_parameters = [thickness, surface_slope, u_in, temperature, c, total_form_drag, shear_stress, rms_roughness, slope_roughness, mean_velocity]
-    return list_of_parameters, create_synthetic, u0
+    # print("Latent Vector:", latent_vector[0])
+    list_of_parameters = [thickness, surface_slope, u_in, temperature, c, total_form_drag, shear_stress, rms_roughness, slope_roughness, mean_velocity[0], mean_velocity[1]] + list(latent_vector[0])
+    # print("Parameters:", list_of_parameters)
+    return list_of_parameters, create_synthetic, u0, latent_vector
 
 def create_dataset(n_samples = 10, dataset_name='synthetic_ice_flow_parameters.csv'):
     all_parameters = []
     for i in range(n_samples):
         print(f"Creating sample {i+1} of {n_samples}")
         try:
-            list_of_parameters, create_synthetic, u0 = create_data()
+            list_of_parameters, create_synthetic, u0, latent_vector = create_data()
             all_parameters.append(list_of_parameters)
             # Save the velocity field and bed topography for each sample
             firedrake.File(f"output_data/velocity_field_{i}.pvd").write(u0)
             firedrake.File(f"output_data/bed_topography_{i}.pvd").write(create_synthetic.b)
         except Exception as e:
             print(f"Sample {i+1} failed with error: {e}. Skipping.")
-    columns = ['Thickness (m)', 'Surface Slope (m)', 'Inflow Velocity (m/a)', 'Temperature (K)', 'C (Pa m^(1/3) a^(1/3))', 'Total Form Drag (Pa)', 'Shear Stress (Pa)', 'RMS Roughness (m)', 'Slope Roughness', 'Mean Velocity (m/a)']
+    columns = ['Thickness (m)', 'Surface Slope (m)', 'Inflow Velocity (m/a)', 'Temperature (K)', 'C (Pa m^(1/3) a^(1/3))', 'Total Form Drag (Pa)', 'Shear Stress (Pa)', 'RMS Roughness (m)', 'Slope Roughness', 'x-Mean Velocity (m/a)', 'y-Mean Velocity (m/a)']+ [f'latent_{j}' for j in range(len(latent_vector[0]))]
     df = pd.DataFrame(all_parameters, columns=columns)
     df.to_csv(f'output_data/{dataset_name}', index=False)
     print(f"Dataset creation complete. Parameters saved to 'output_data/{dataset_name}'.")

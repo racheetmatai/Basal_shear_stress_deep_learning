@@ -34,16 +34,16 @@ class CreateSynthetic:
             self.compute_box_indicator()
 
         denominator = assemble(h * self.indicator * firedrake.dx)
-        # Check if u is vector-valued
         if hasattr(u, 'ufl_shape') and len(u.ufl_shape) == 1:
-            # Vector velocity: compute each component
             mean_components = [assemble(h * u[i] * self.indicator * firedrake.dx) / denominator for i in range(u.ufl_shape[0])]
             mean_velocity = as_vector(mean_components)
+            # Convert to Python list of floats
+            mean_velocity = [float(x) for x in mean_velocity]
         else:
-            # Scalar velocity
             mean_velocity = assemble(h * u * self.indicator * firedrake.dx) / denominator
+            mean_velocity = float(mean_velocity)
         return mean_velocity
-    
+            
     def compute_roughness_metrics(self, b):
         """
         Compute RMS roughness and slope roughness for the box region using self.indicator.
@@ -61,7 +61,7 @@ class CreateSynthetic:
         rms_roughness = (assemble((b - mean_b)**2 * self.indicator * firedrake.dx) / area)**0.5
         # Slope roughness (RMS of gradient magnitude)
         slope_roughness = (assemble(firedrake.inner(grad(b), grad(b)) * self.indicator * firedrake.dx) / area)**0.5
-        return rms_roughness, slope_roughness
+        return rms_roughness, float(slope_roughness)
 
     def compute_form_drag_volume(self, u, h, s, b):
         """
@@ -128,12 +128,12 @@ class CreateSynthetic:
         n = 1  # number of images to generate
         random_latent_vectors = np.random.uniform(low=lower, high=upper, size=(n, len(lower)))
         generated_images = decoder_loaded.predict(random_latent_vectors)
-        return generated_images[0]
+        return generated_images[0], random_latent_vectors
     
     def create_topography_scaled(self, encoder_path='vae/encoder_model', decoder_path='vae/decoder_model', percentiles_path='vae/latent_percentiles.pkl', multiplier=1):
         # b = np.load('thw_image_0.npy') # temp, use model
-        b = self.create_topography(encoder_path, decoder_path, percentiles_path)
-        return b[:,:,0] * multiplier
+        b, latent_vector = self.create_topography(encoder_path, decoder_path, percentiles_path)
+        return b[:,:,0] * multiplier , latent_vector
     
     def pad_topography(self, data, pad_x_minus, pad_x_plus, pad_y, mode = 'reflect'):
         """
@@ -300,7 +300,7 @@ class CreateSynthetic:
         :param pixel_size_y: Pixel size in the y-direction.
         :return: Generated images.
         """
-        b = self.create_topography_scaled(encoder_path=encoder_path, decoder_path=decoder_path, percentiles_path=percentiles_path, multiplier=scaling_multiplier)
+        b, latent_vector = self.create_topography_scaled(encoder_path=encoder_path, decoder_path=decoder_path, percentiles_path=percentiles_path, multiplier=scaling_multiplier)
         self.padded_topo = self.pad_topography(b, pad_x_minus, pad_x_plus, pad_y)
         if not index:
             self.random_index = np.random.randint(0, 100000)
@@ -313,7 +313,7 @@ class CreateSynthetic:
         self.padded_topo = self.pad_topography(b, pad_x_minus+1, pad_x_plus+1, pad_y+1)
         transform = self.save_tif(self.padded_topo, pixel_size_x, pixel_size_y, filename=self.filename)
 
-        return self.padded_topo, transform
+        return self.padded_topo, transform, latent_vector
 
     def create_mesh_synthetic(self, filename = None, lcar = 1e3):
         """
